@@ -119,14 +119,21 @@ class FlutterwavePaymentProcessor(
         return try {
             val txRef = "POS_${System.currentTimeMillis()}"
             
+            // Encrypt card details using 3DES-24 as required by Flutterwave
+            val cardDetails = JSONObject().apply {
+                put("card_number", cardInfo.cardNumber)
+                put("cvv", "270") // Use actual CVV from your card
+                put("expiry_month", expiryMonth)
+                put("expiry_year", expiryYear)
+            }
+            
+            val encryptedCardDetails = encryptCardDetails(cardDetails.toString())
+            
             val chargeData = JSONObject().apply {
                 put("tx_ref", txRef)
                 put("amount", amount.toInt())
                 put("currency", currency)
-                put("card_number", cardInfo.cardNumber)
-                put("expiry_month", expiryMonth)
-                put("expiry_year", expiryYear)
-                put("cvv", "270") // Use actual CVV from your card
+                put("client", encryptedCardDetails) // Use encrypted card details
                 put("redirect_url", "https://your-pos-app.com/payment-callback")
                 put("email", customerEmail)
                 put("fullname", customerName)
@@ -334,6 +341,36 @@ class FlutterwavePaymentProcessor(
         } catch (e: Exception) {
             Log.e(TAG, "Error parsing expiry date: $expiryDate", e)
             null
+        }
+    }
+    
+    /**
+     * Encrypt card details using 3DES-24 as required by Flutterwave
+     */
+    private fun encryptCardDetails(cardDetails: String): String {
+        return try {
+            // Convert encryption key to 24-byte key for 3DES
+            val keyBytes = encryptionKey.toByteArray(Charsets.UTF_8)
+            val key24 = if (keyBytes.size >= 24) {
+                keyBytes.copyOf(24)
+            } else {
+                // Pad or repeat key to make it 24 bytes
+                val paddedKey = ByteArray(24)
+                for (i in keyBytes.indices) {
+                    paddedKey[i % 24] = keyBytes[i]
+                }
+                paddedKey
+            }
+            
+            val key = SecretKeySpec(key24, "DESede")
+            val cipher = Cipher.getInstance("DESede/ECB/PKCS5Padding")
+            cipher.init(Cipher.ENCRYPT_MODE, key)
+            
+            val encryptedBytes = cipher.doFinal(cardDetails.toByteArray(Charsets.UTF_8))
+            Base64.encodeToString(encryptedBytes, Base64.NO_WRAP)
+        } catch (e: Exception) {
+            Log.e(TAG, "3DES-24 encryption failed", e)
+            throw RuntimeException("Could not encrypt card data", e)
         }
     }
     
