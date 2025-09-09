@@ -66,12 +66,18 @@ class PaymentActivity : AppCompatActivity() {
             val cvv = intent.getStringExtra("CVV") ?: ""
             val cardholderName = intent.getStringExtra("CARDHOLDER_NAME") ?: ""
             
-            processManualCard(cardNumber, expiryDate, cvv, cardholderName)
+            processManualCard(cardNumber, expiryDate, cvv, cardholderName, 0.0)
         }
     }
     
-    private fun processManualCard(cardNumber: String, expiryDate: String, cvv: String, cardholderName: String) {
+    private fun processManualCard(cardNumber: String, expiryDate: String, cvv: String, cardholderName: String, amount: Double) {
         binding.tvStatus.text = "Processing manual card entry..."
+        
+        // Update the current amount
+        currentAmount = String.format("%.2f", amount)
+        binding.etAmount.setText(currentAmount)
+        binding.tvAmount.text = "$$currentAmount"
+        viewModel.setAmount(currentAmount)
         
         // Create a mock card info entity for manual entry
         val mockCardInfo = object : com.nexgo.oaf.apiv3.device.reader.CardInfoEntity() {
@@ -136,6 +142,7 @@ class PaymentActivity : AppCompatActivity() {
             btnClearAmount.setOnClickListener { clearAmount() }
             btnCancel.setOnClickListener { finish() }
             btnBack.setOnClickListener { finish() }
+            btnManualEntry.setOnClickListener { showManualEntryDialog() }
         }
     }
     
@@ -704,6 +711,37 @@ class PaymentActivity : AppCompatActivity() {
         binding.etAmount.setText("0.00")
         binding.tvAmount.text = "$0.00"
         viewModel.setAmount("0.00")
+    }
+    
+    private fun showManualEntryDialog() {
+        val dialogView = layoutInflater.inflate(R.layout.dialog_manual_card_entry, null)
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Manual Card Entry")
+            .setView(dialogView)
+            .setPositiveButton("Process Payment") { _, _ ->
+                val cardNumber = dialogView.findViewById<android.widget.EditText>(R.id.etCardNumber).text.toString()
+                val expiryDate = dialogView.findViewById<android.widget.EditText>(R.id.etExpiryDate).text.toString()
+                val cvv = dialogView.findViewById<android.widget.EditText>(R.id.etCvv).text.toString()
+                val cardholderName = dialogView.findViewById<android.widget.EditText>(R.id.etCardholderName).text.toString()
+                val amount = dialogView.findViewById<android.widget.EditText>(R.id.etAmount).text.toString()
+                
+                if (cardNumber.isBlank() || expiryDate.isBlank() || cvv.isBlank() || amount.isBlank()) {
+                    UIUtils.showErrorSnackbar(binding.root, "Please fill in all fields")
+                    return@setPositiveButton
+                }
+                
+                val amountValue = amount.toDoubleOrNull()
+                if (amountValue == null || amountValue <= 0) {
+                    UIUtils.showErrorSnackbar(binding.root, "Please enter a valid amount greater than $0.00")
+                    return@setPositiveButton
+                }
+                
+                processManualCard(cardNumber, expiryDate, cvv, cardholderName, amountValue)
+            }
+            .setNegativeButton("Cancel", null)
+            .create()
+        
+        dialog.show()
     }
     
     private fun resetPaymentUI(clearAmount: Boolean = false) {

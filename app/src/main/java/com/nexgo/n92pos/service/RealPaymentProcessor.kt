@@ -77,6 +77,12 @@ class RealPaymentProcessor(private val context: Context) {
     ) {
         Log.d(TAG, "Processing REAL payment: $amount for card ending in ${cardNumber.takeLast(4)}")
         
+        // Validate amount - PayPal requires minimum $0.01
+        if (amount <= 0.0) {
+            callback.onFailure("Amount must be greater than $0.00 for real transactions")
+            return
+        }
+        
         // Validate card number using Luhn algorithm
         if (!isValidCardNumber(cardNumber)) {
             callback.onFailure("Invalid card number")
