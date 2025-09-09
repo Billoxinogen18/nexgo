@@ -559,6 +559,7 @@ class RealPaymentProcessor(private val context: Context) {
      * @return Formatted expiry date in YYYY-MM format (e.g., "2028-10")
      */
     private fun formatExpiryForPayPal(expiryMMYY: String): String {
+        Log.d(TAG, "formatExpiryForPayPal input: '$expiryMMYY'")
         if (expiryMMYY.length != 4) {
             Log.w(TAG, "Invalid expiry format: $expiryMMYY, expected MMYY")
             return "2025-12" // Fallback
@@ -566,7 +567,9 @@ class RealPaymentProcessor(private val context: Context) {
         
         val month = expiryMMYY.substring(0, 2)
         val year = "20" + expiryMMYY.substring(2, 4) // Convert "28" to "2028"
-        return "$year-$month" // Format as YYYY-MM
+        val result = "$year-$month" // Format as YYYY-MM
+        Log.d(TAG, "formatExpiryForPayPal output: '$result'")
+        return result
     }
     
     private fun getRealCardInfo(cardNumber: String, expiryDate: String, callback: (CardInfo?) -> Unit) {
