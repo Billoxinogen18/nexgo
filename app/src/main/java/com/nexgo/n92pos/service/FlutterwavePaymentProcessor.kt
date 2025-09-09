@@ -36,10 +36,10 @@ class FlutterwavePaymentProcessor(
     
     companion object {
         private const val TAG = "FlutterwavePaymentProcessor"
-        private const val PRODUCTION_URL = "https://api.flutterwave.com/v3"
+        private const val RAVE_API_URL = "https://api.ravepay.co/flwv3-pug/getpaidx/api"
     }
     
-    private val baseUrl = PRODUCTION_URL
+    private val baseUrl = RAVE_API_URL
     private val client = OkHttpClient()
     private val random = SecureRandom()
     
@@ -119,34 +119,29 @@ class FlutterwavePaymentProcessor(
         return try {
             val txRef = "POS_${System.currentTimeMillis()}"
             
-            // Encrypt card details using 3DES-24 as required by Flutterwave
-            val cardDetails = JSONObject().apply {
-                put("card_number", cardInfo.cardNumber)
-                put("cvv", "270") // Use actual CVV from your card
-                put("expiry_month", expiryMonth)
-                put("expiry_year", expiryYear)
-            }
-            
-            val encryptedCardDetails = encryptCardDetails(cardDetails.toString())
+            // Rave API doesn't require encryption for card details
             
             val chargeData = JSONObject().apply {
-                put("tx_ref", txRef)
-                put("amount", amount.toInt())
+                put("PBFPubKey", publicKey)
+                put("cardno", cardInfo.cardNumber)
+                put("cvv", "270") // Use actual CVV from your card
+                put("expirymonth", expiryMonth)
+                put("expiryyear", expiryYear)
                 put("currency", currency)
-                put("client", encryptedCardDetails) // Use encrypted card details
-                put("redirect_url", "https://your-pos-app.com/payment-callback")
+                put("country", "KE") // Kenya
+                put("amount", amount.toString())
                 put("email", customerEmail)
-                put("fullname", customerName)
-                put("meta", JSONObject().apply {
-                    put("pos_terminal", "Nexgo N92")
-                    put("transaction_type", "card_present")
-                })
+                put("phonenumber", "08012345678") // Default phone number
+                put("firstname", customerName.split(" ").firstOrNull() ?: "Customer")
+                put("lastname", customerName.split(" ").lastOrNull() ?: "Name")
+                put("txRef", txRef)
+                put("redirect_url", "https://your-pos-app.com/payment-callback")
+                put("device_fingerprint", "POS_${System.currentTimeMillis()}")
             }
             
             val request = Request.Builder()
-                .url("$baseUrl/charges?type=card")
+                .url("$baseUrl/charge")
                 .post(chargeData.toString().toRequestBody("application/json".toMediaType()))
-                .addHeader("Authorization", "Bearer $secretKey")
                 .addHeader("Content-Type", "application/json")
                 .build()
             
