@@ -36,10 +36,10 @@ class FlutterwavePaymentProcessor(
     
     companion object {
         private const val TAG = "FlutterwavePaymentProcessor"
-        private const val FLUTTERWAVE_API_URL = "https://api.flutterwave.com"
+        private const val RAVE_API_URL = "https://api.ravepay.co/flwv3-pug/getpaidx/api"
     }
     
-    private val baseUrl = FLUTTERWAVE_API_URL
+    private val baseUrl = RAVE_API_URL
     private val client = OkHttpClient()
     private val random = SecureRandom()
     
@@ -119,36 +119,27 @@ class FlutterwavePaymentProcessor(
         return try {
             val txRef = "POS_${System.currentTimeMillis()}"
             
-            // Prepare card data for encryption (as per Flutterwave Node.js library)
-            val cardData = JSONObject().apply {
-                put("enckey", encryptionKey)
-                put("tx_ref", txRef)
-                put("amount", amount)
-                put("currency", currency)
-                put("card_number", cardInfo.cardNumber)
-                put("cvv", "270") // Use actual CVV from your card
-                put("expiry_month", expiryMonth)
-                put("expiry_year", expiryYear)
-                put("email", customerEmail)
-                put("fullname", customerName)
-                put("phone_number", "08012345678")
-                put("device_fingerprint", "POS_${System.currentTimeMillis()}")
-                put("redirect_url", "https://your-pos-app.com/payment-callback")
-            }
-            
-            // Encrypt the card data using 3DES-ECB (as per Flutterwave Node.js library)
-            val encryptedCardData = encryptCardDetails(cardData.toString())
-            
-            // Prepare the final request payload (as per Flutterwave Node.js library)
+            // Prepare Rave API request payload (no encryption needed for Rave)
             val chargeData = JSONObject().apply {
-                put("public_key", publicKey)
-                put("client", encryptedCardData)
+                put("PBFPubKey", publicKey)
+                put("cardno", cardInfo.cardNumber)
+                put("cvv", "270") // Use actual CVV from your card
+                put("expirymonth", expiryMonth)
+                put("expiryyear", expiryYear)
+                put("amount", amount)
+                put("email", customerEmail)
+                put("phonenumber", "08012345678")
+                put("firstname", customerName.split(" ").firstOrNull() ?: "Customer")
+                put("lastname", customerName.split(" ").drop(1).joinToString(" ") ?: "Name")
+                put("txRef", txRef)
+                put("currency", currency)
+                put("country", "NG")
+                put("device_fingerprint", "POS_${System.currentTimeMillis()}")
             }
             
             val request = Request.Builder()
-                .url("$baseUrl/v3/charges?type=card")
+                .url("$baseUrl/charge")
                 .post(chargeData.toString().toRequestBody("application/json".toMediaType()))
-                .addHeader("Authorization", "Bearer $secretKey")
                 .addHeader("Content-Type", "application/json")
                 .build()
             
