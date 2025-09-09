@@ -1,0 +1,3 @@
+include ':app'
+include ':nexgo_lib_aar'
+include ':nibss_lib_aar'
