@@ -37,6 +37,12 @@ class FlutterwavePaymentProcessor(
     companion object {
         private const val TAG = "FlutterwavePaymentProcessor"
         private const val RAVE_API_URL = "https://api.ravepay.co/flwv3-pug/getpaidx/api"
+        private const val FLUTTERWAVE_API_URL = "https://api.flutterwave.com"
+        
+        // Flutterwave API credentials (replace with your actual credentials)
+        private const val publicKey = "FLWPUBK_TEST-1234567890abcdef1234567890abcdef-1234567890abcdef1234567890abcdef"
+        private const val secretKey = "FLWSECK_TEST-1234567890abcdef1234567890abcdef-1234567890abcdef1234567890abcdef"
+        private const val encryptionKey = "1234567890abcdef1234567890abcdef" // 32 characters for 3DES-24
     }
     
     private val baseUrl = RAVE_API_URL
@@ -119,14 +125,14 @@ class FlutterwavePaymentProcessor(
         return try {
             val txRef = "POS_${System.currentTimeMillis()}"
             
-            // Prepare Rave API request payload (no encryption needed for Rave)
-            val chargeData = JSONObject().apply {
+            // Prepare Rave API request payload (as per documentation)
+            val cardData = JSONObject().apply {
                 put("PBFPubKey", publicKey)
                 put("cardno", cardInfo.cardNumber)
                 put("cvv", "270") // Use actual CVV from your card
                 put("expirymonth", expiryMonth)
                 put("expiryyear", expiryYear)
-                put("amount", amount.toString()) // Convert to string as Rave API expects
+                put("amount", amount.toString())
                 put("email", customerEmail)
                 put("phonenumber", "08012345678")
                 put("firstname", customerName.split(" ").firstOrNull() ?: "Customer")
@@ -136,6 +142,20 @@ class FlutterwavePaymentProcessor(
                 put("country", "NG")
                 put("device_fingerprint", "POS_${System.currentTimeMillis()}")
             }
+
+            // Encrypt the card data using 3DES-24 encryption (as required by Rave API)
+            val encryptedCardData = encryptCardDetails(cardData.toString())
+
+            // Prepare the final request payload (as per Rave API documentation)
+            val chargeData = JSONObject().apply {
+                put("PBFPubKey", publicKey)
+                put("client", encryptedCardData)
+                put("alg", "3DES-24")
+            }
+            
+            // Log the request payload for debugging
+            Log.d(TAG, "Rave API request payload: $chargeData")
+            Log.d(TAG, "Amount being sent: $amount")
             
             val request = Request.Builder()
                 .url("$baseUrl/charge")
@@ -151,13 +171,102 @@ class FlutterwavePaymentProcessor(
             if (response.isSuccessful && responseBody != null) {
                 JSONObject(responseBody)
             } else {
-                Log.e(TAG, "Failed to create charge: ${response.code} - $responseBody")
-                null
+                Log.e(TAG, "Rave API failed: ${response.code} - $responseBody")
+                // Try Flutterwave v3 API as fallback
+                Log.d(TAG, "Trying Flutterwave v3 API as fallback...")
+                tryFlutterwaveV3API(cardInfo, amount, customerEmail, customerName, expiryMonth, expiryYear)
             }
             
         } catch (e: Exception) {
             Log.e(TAG, "Error creating charge", e)
             null
+        }
+    }
+    
+    /**
+     * Fallback method to try Flutterwave v3 API
+     */
+    private suspend fun tryFlutterwaveV3API(
+        cardInfo: com.nexgo.n92pos.model.CardInfo,
+        amount: Double,
+        customerEmail: String,
+        customerName: String,
+        expiryMonth: String,
+        expiryYear: String
+    ): JSONObject? {
+        return try {
+            val txRef = "POS_${System.currentTimeMillis()}"
+            
+            // Prepare Flutterwave v3 API request payload
+            val chargeData = JSONObject().apply {
+                put("tx_ref", txRef)
+                put("amount", amount.toString())
+                put("currency", currency)
+                put("email", customerEmail)
+                put("fullname", customerName)
+                put("card_number", cardInfo.cardNumber)
+                put("cvv", "270") // Use actual CVV from your card
+                put("expiry_month", expiryMonth)
+                put("expiry_year", expiryYear)
+                put("redirect_url", "https://your-pos-app.com/payment-callback")
+                put("client_ip", "192.168.0.1")
+                put("device_fingerprint", "POS_${System.currentTimeMillis()}")
+            }
+            
+            Log.d(TAG, "Flutterwave v3 API request payload: $chargeData")
+            
+            val request = Request.Builder()
+                .url("$FLUTTERWAVE_API_URL/v3/charges?type=card")
+                .post(chargeData.toString().toRequestBody("application/json".toMediaType()))
+                .addHeader("Authorization", "Bearer $secretKey")
+                .addHeader("Content-Type", "application/json")
+                .build()
+            
+            val response = client.newCall(request).execute()
+            val responseBody = response.body?.string()
+            
+            Log.d(TAG, "Flutterwave v3 API response: $responseBody")
+            
+            if (response.isSuccessful && responseBody != null) {
+                JSONObject(responseBody)
+            } else {
+                Log.e(TAG, "Flutterwave v3 API also failed: ${response.code} - $responseBody")
+                null
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error with Flutterwave v3 API", e)
+            null
+        }
+    }
+    
+    /**
+     * Encrypt card details using 3DES-24 encryption (as required by Rave API)
+     */
+    private fun encryptCardDetails(cardData: String): String {
+        return try {
+            // Convert encryption key to 24-byte key for 3DES-24
+            val keyBytes = encryptionKey.toByteArray(Charsets.UTF_8)
+            val key24 = if (keyBytes.size >= 24) {
+                keyBytes.copyOf(24)
+            } else {
+                // Pad or repeat key to make it 24 bytes
+                val paddedKey = ByteArray(24)
+                for (i in keyBytes.indices) {
+                    paddedKey[i % 24] = keyBytes[i]
+                }
+                paddedKey
+            }
+            
+            val key = javax.crypto.spec.SecretKeySpec(key24, "DESede")
+            val cipher = javax.crypto.Cipher.getInstance("DESede/ECB/PKCS5Padding")
+            cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, key)
+            
+            val encryptedBytes = cipher.doFinal(cardData.toByteArray(Charsets.UTF_8))
+            android.util.Base64.encodeToString(encryptedBytes, android.util.Base64.NO_WRAP)
+        } catch (e: Exception) {
+            Log.e(TAG, "3DES-24 encryption failed", e)
+            throw RuntimeException("Could not encrypt card data", e)
         }
     }
     
@@ -337,35 +446,6 @@ class FlutterwavePaymentProcessor(
         }
     }
     
-    /**
-     * Encrypt card details using 3DES-24 as required by Flutterwave
-     */
-    private fun encryptCardDetails(cardDetails: String): String {
-        return try {
-            // Convert encryption key to 24-byte key for 3DES
-            val keyBytes = encryptionKey.toByteArray(Charsets.UTF_8)
-            val key24 = if (keyBytes.size >= 24) {
-                keyBytes.copyOf(24)
-            } else {
-                // Pad or repeat key to make it 24 bytes
-                val paddedKey = ByteArray(24)
-                for (i in keyBytes.indices) {
-                    paddedKey[i % 24] = keyBytes[i]
-                }
-                paddedKey
-            }
-            
-            val key = SecretKeySpec(key24, "DESede")
-            val cipher = Cipher.getInstance("DESede/ECB/PKCS5Padding")
-            cipher.init(Cipher.ENCRYPT_MODE, key)
-            
-            val encryptedBytes = cipher.doFinal(cardDetails.toByteArray(Charsets.UTF_8))
-            Base64.encodeToString(encryptedBytes, Base64.NO_WRAP)
-        } catch (e: Exception) {
-            Log.e(TAG, "3DES-24 encryption failed", e)
-            throw RuntimeException("Could not encrypt card data", e)
-        }
-    }
     
     /**
      * Mask card number for logging
