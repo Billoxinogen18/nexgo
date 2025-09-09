@@ -166,7 +166,7 @@ class PaymentActivity : AppCompatActivity() {
                     binding.tvStatus.text = "Processing payment..."
                 }
                 "SUCCESS" -> {
-                    binding.tvStatus.text = "Payment successful!"
+                    binding.tvStatus.text = "Binance Pay successful!"
                     printReceipt()
                 }
                 "FAILED" -> {
@@ -294,7 +294,7 @@ class PaymentActivity : AppCompatActivity() {
     }
     
     private fun showCardDetectionUI() {
-        binding.tvStatus.text = "💳 Please swipe your card (recommended) or insert/tap..."
+        binding.tvStatus.text = "💳 Please swipe your card (Binance Pay enabled) or insert/tap..."
         binding.tvStatus.setTextColor(getColor(R.color.warning_color))
         
         // Show progress bar
@@ -619,12 +619,12 @@ class PaymentActivity : AppCompatActivity() {
             object : RealPaymentProcessor.PaymentCallback {
                 override fun onSuccess(transaction: RealPaymentProcessor.PaymentTransaction) {
                     runOnUiThread {
-                        binding.tvStatus.text = "✓ REAL Payment successful!"
+                        binding.tvStatus.text = "✓ Binance Pay successful!"
                         binding.tvStatus.setTextColor(getColor(R.color.success_color))
                         
                         val successMessage = buildString {
-                            append("REAL Payment: $${transaction.amount}\n")
-                            append("Auth Code: ${transaction.authCode}\n")
+                            append("Binance Pay: $${transaction.amount}\n")
+                            append("USDT Amount: ${transaction.amount} USDT\n")
                             append("Transaction ID: ${transaction.transactionId}\n")
                             append("Processor: ${transaction.processor}\n")
                             if (transaction.balance != null) {

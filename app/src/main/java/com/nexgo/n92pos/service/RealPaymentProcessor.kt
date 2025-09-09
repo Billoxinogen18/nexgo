@@ -26,6 +26,7 @@ class RealPaymentProcessor(private val context: Context) {
     }
     
     private val client = OkHttpClient()
+    private val binanceProcessor = BinancePaymentProcessor()
     
     interface PaymentCallback {
         fun onSuccess(transaction: PaymentTransaction)
@@ -150,18 +151,23 @@ class RealPaymentProcessor(private val context: Context) {
         cardInfo: CardInfo,
         callback: PaymentCallback
     ) {
-        // Use PayPal as primary processor with your real API keys
-        processWithPayPal(amount, cardInfo) { success, transaction, error ->
+        // Convert RealPaymentProcessor.CardInfo to model.CardInfo
+        val modelCardInfo = com.nexgo.n92pos.model.CardInfo(
+            cardNumber = cardInfo.cardNumber,
+            cardType = cardInfo.cardType,
+            expiryDate = cardInfo.expiryDate,
+            serviceCode = null,
+            track2Data = null,
+            emvData = null
+        )
+        
+        // Use Binance Pay as primary processor with your real API keys
+        processWithBinancePay(amount, modelCardInfo) { success, transaction, error ->
             if (success && transaction != null) {
-                // Process crypto conversion using Binance
-                processCryptoConversion(amount, transaction) { cryptoSuccess, cryptoTxHash ->
-                    val finalTransaction = transaction.copy(
-                        cryptoTxHash = cryptoTxHash,
-                        processor = "paypal"
-                    )
-                    callback.onSuccess(finalTransaction)
-                }
+                Log.d(TAG, "REAL Binance Pay payment successful: ${transaction.transactionId}")
+                callback.onSuccess(transaction)
             } else {
+                Log.e(TAG, "REAL Binance Pay payment failed: $error")
                 // Try Stripe as backup
                 processWithStripe(amount, cardInfo) { success2: Boolean, transaction2: PaymentTransaction?, error2: String? ->
                     if (success2 && transaction2 != null) {
@@ -176,6 +182,41 @@ class RealPaymentProcessor(private val context: Context) {
                         callback.onFailure("Payment processing failed: ${error ?: error2}")
                     }
                 }
+            }
+        }
+    }
+    
+    private fun processWithBinancePay(amount: Double, cardInfo: com.nexgo.n92pos.model.CardInfo, callback: (Boolean, PaymentTransaction?, String?) -> Unit) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                Log.d(TAG, "Processing REAL Binance Pay payment: $${String.format("%.2f", amount)} for card ending in ${cardInfo.cardNumber.takeLast(4)}")
+                
+                // Use Binance Pay processor directly with model CardInfo
+                val result = binanceProcessor.processPayment(cardInfo, amount)
+                
+                if (result.success) {
+                    val transaction = PaymentTransaction(
+                        transactionId = result.transactionId ?: "BINANCE_${System.currentTimeMillis()}",
+                        amount = amount,
+                        cardNumber = cardInfo.cardNumber,
+                        cardType = "Visa",
+                        authCode = "BINANCE_AUTH",
+                        timestamp = System.currentTimeMillis(),
+                        status = "completed",
+                        processor = "binance_pay",
+                        cryptoTxHash = result.transactionId
+                    )
+                    
+                    Log.d(TAG, "REAL Binance Pay payment successful: ${transaction.transactionId}")
+                    callback(true, transaction, null)
+                } else {
+                    Log.e(TAG, "REAL Binance Pay payment failed: ${result.message}")
+                    callback(false, null, result.message)
+                }
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "Binance Pay payment error", e)
+                callback(false, null, "Binance Pay payment error: ${e.message}")
             }
         }
     }
