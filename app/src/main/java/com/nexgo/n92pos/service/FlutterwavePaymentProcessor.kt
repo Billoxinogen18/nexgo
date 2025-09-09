@@ -1,250 +1,351 @@
 package com.nexgo.n92pos.service
 
+import android.content.Context
+import android.util.Base64
 import android.util.Log
+import com.nexgo.n92pos.service.RealPaymentProcessor.PaymentTransaction
 import com.nexgo.n92pos.model.CardInfo
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
-import java.io.IOException
-import java.util.*
+import java.security.SecureRandom
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
-class FlutterwavePaymentProcessor {
+/**
+ * Flutterwave Direct Card Payment Processor
+ * Uses the official Flutterwave v3 API for direct card payments
+ * Based on: https://developer.flutterwave.com/docs/collecting-payments/direct-card-charge
+ */
+class FlutterwavePaymentProcessor(
+    private val context: Context,
+    private val publicKey: String,
+    private val secretKey: String,
+    private val encryptionKey: String,
+    private val isProduction: Boolean = true,
+    private val currency: String = "KES"
+) {
     
-    data class FlutterwavePaymentResult(
-        val success: Boolean,
-        val transactionId: String?,
-        val message: String,
-        val paymentUrl: String? = null
-    )
+    private var currentCardInfo: com.nexgo.n92pos.model.CardInfo? = null
     
     companion object {
         private const val TAG = "FlutterwavePaymentProcessor"
-        
-        // Flutterwave API credentials
-        private const val PUBLIC_KEY = "FLWPUBK-29802e133b304197dae7c95ac0239b03-X"
-        private const val SECRET_KEY = "FLWSECK-2550f6c6e154dabf6b6040079990fc44-1992edc8eedvt-X"
-        private const val ENCRYPTION_KEY = "2550f6c6e15446bdb82e59e0"
-        
-        // Flutterwave API endpoints
-        private const val BASE_URL = "https://api.flutterwave.com/v3"
-        private const val PAYMENT_ENDPOINT = "/payments"
-        private const val VERIFY_ENDPOINT = "/transactions"
-        
-        // Currency and country settings
-        private const val CURRENCY = "USD"
-        private const val COUNTRY = "US"
+        private const val PRODUCTION_URL = "https://api.flutterwave.com/v3"
     }
     
+    private val baseUrl = PRODUCTION_URL
     private val client = OkHttpClient()
+    private val random = SecureRandom()
     
-    suspend fun processPayment(cardInfo: CardInfo, amount: Double): FlutterwavePaymentResult = withContext(Dispatchers.IO) {
-        try {
-            Log.d(TAG, "Processing Flutterwave payment: $${amount} for card ending in ${cardInfo.cardNumber.takeLast(4)}")
-            
-            // Step 1: Initialize payment
-            val initResult = initializePayment(cardInfo, amount)
-            
-            if (initResult.success) {
-                Log.d(TAG, "Flutterwave direct payment successful: ${initResult.transactionId}")
-                FlutterwavePaymentResult(
-                    success = true,
-                    transactionId = initResult.transactionId,
-                    message = "Payment successful! Amount: $${amount} processed via Flutterwave"
-                )
-            } else {
-                Log.e(TAG, "Failed to initialize Flutterwave payment: ${initResult.message}")
-                FlutterwavePaymentResult(
-                    success = false,
-                    transactionId = null,
-                    message = "Payment initialization failed: ${initResult.message}"
-                )
+    /**
+     * Callback interface for payment processing events
+     */
+    interface FlutterwaveCallback {
+        fun onPinRequired(flwRef: String, message: String = "Please enter your card PIN")
+        fun onRedirectRequired(url: String, message: String = "Please complete 3DS authentication")
+        fun onOtpRequired(flwRef: String, message: String = "Please enter the OTP sent to your phone")
+        fun onAvsRequired(flwRef: String, message: String = "Please provide your billing address")
+        fun onSuccess(transaction: PaymentTransaction)
+        fun onFailure(error: String)
+    }
+    
+    /**
+     * Main entry point for processing card payments
+     * Uses direct card charge API as per Flutterwave documentation
+     */
+    fun processPayment(
+        cardInfo: com.nexgo.n92pos.model.CardInfo,
+        amount: Double,
+        customerEmail: String = "customer@pos.com",
+        customerName: String = "POS Customer",
+        callback: FlutterwaveCallback
+    ) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                Log.d(TAG, "Starting Flutterwave payment processing")
+                Log.d(TAG, "Card: ${maskCardNumber(cardInfo.cardNumber)}")
+                Log.d(TAG, "Amount: $${String.format("%.2f", amount)}")
+                
+                // Store card info for later use
+                currentCardInfo = cardInfo
+                
+                // Parse expiry date
+                val expiryParts = parseExpiryDate(cardInfo.expiryDate ?: "")
+                if (expiryParts == null) {
+                    withContext(Dispatchers.Main) {
+                        callback.onFailure("Invalid expiry date format")
+                    }
+                    return@launch
+                }
+                
+                // Create direct charge with card data
+                val chargeResult = createDirectCharge(cardInfo, amount, customerEmail, customerName, expiryParts.first, expiryParts.second)
+                if (chargeResult == null) {
+                    withContext(Dispatchers.Main) {
+                        callback.onFailure("Failed to create charge")
+                    }
+                    return@launch
+                }
+                
+                // Handle the charge result
+                handleChargeResult(chargeResult, callback)
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "Payment processing error", e)
+                withContext(Dispatchers.Main) {
+                    callback.onFailure("Payment processing failed: ${e.message}")
+                }
             }
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "Flutterwave payment error", e)
-            FlutterwavePaymentResult(
-                success = false,
-                transactionId = null,
-                message = "Payment processing error: ${e.message}"
-            )
         }
     }
     
-    private suspend fun initializePayment(cardInfo: CardInfo, amount: Double): FlutterwavePaymentResult = withContext(Dispatchers.IO) {
-        try {
-            val txRef = "POS_${System.currentTimeMillis()}_${cardInfo.cardNumber.takeLast(4)}"
+    /**
+     * Create direct charge using Flutterwave's direct card charge API
+     */
+    private suspend fun createDirectCharge(
+        cardInfo: com.nexgo.n92pos.model.CardInfo,
+        amount: Double,
+        customerEmail: String,
+        customerName: String,
+        expiryMonth: String,
+        expiryYear: String
+    ): JSONObject? {
+        return try {
+            val txRef = "POS_${System.currentTimeMillis()}"
             
-            // Create direct card payment request body
-            val requestBody = JSONObject().apply {
+            val chargeData = JSONObject().apply {
                 put("tx_ref", txRef)
-                put("amount", amount)
-                put("currency", CURRENCY)
+                put("amount", amount.toInt())
+                put("currency", currency)
+                put("card_number", cardInfo.cardNumber)
+                put("expiry_month", expiryMonth)
+                put("expiry_year", expiryYear)
+                put("cvv", "270") // Use actual CVV from your card
                 put("redirect_url", "https://your-pos-app.com/payment-callback")
-                put("customer", JSONObject().apply {
-                    put("email", "customer@pos.com")
-                    put("name", "Cardholder")
-                    put("phone_number", "1234567890")
-                })
-                put("card", JSONObject().apply {
-                    put("card_number", cardInfo.cardNumber)
-                    put("cvv", "123") // In real implementation, get from user input
-                    put("expiry_month", cardInfo.expiryDate?.take(2) ?: "12")
-                    put("expiry_year", "20${cardInfo.expiryDate?.takeLast(2) ?: "25"}")
-                })
-                put("authorization", JSONObject().apply {
-                    put("mode", "pin")
-                    put("pin", "3310") // Default PIN for testing
-                })
+                put("email", customerEmail)
+                put("fullname", customerName)
                 put("meta", JSONObject().apply {
                     put("pos_terminal", "Nexgo N92")
                     put("transaction_type", "card_present")
                 })
-            }.toString()
+            }
             
             val request = Request.Builder()
-                .url("$BASE_URL$PAYMENT_ENDPOINT")
-                .addHeader("Authorization", "Bearer $SECRET_KEY")
+                .url("$baseUrl/charges?type=card")
+                .post(chargeData.toString().toRequestBody("application/json".toMediaType()))
+                .addHeader("Authorization", "Bearer $secretKey")
                 .addHeader("Content-Type", "application/json")
-                .post(requestBody.toRequestBody("application/json".toMediaType()))
                 .build()
-            
-            Log.d(TAG, "Making Flutterwave payment request to: $BASE_URL$PAYMENT_ENDPOINT")
-            Log.d(TAG, "Request body: $requestBody")
             
             val response = client.newCall(request).execute()
             val responseBody = response.body?.string()
             
-            Log.d(TAG, "Flutterwave response: ${response.code} - $responseBody")
+            Log.d(TAG, "Create charge response: $responseBody")
             
-            if (response.isSuccessful && !responseBody.isNullOrEmpty()) {
-                val json = JSONObject(responseBody)
-                if (json.getString("status") == "success") {
-                    val data = json.getJSONObject("data")
-                    val transactionId = data.optString("tx_ref", txRef)
-                    val paymentStatus = data.optString("status", "unknown")
-                    val paymentMessage = data.optString("processor_response", "Payment processed")
-                    
-                    Log.d(TAG, "Flutterwave direct payment result: $transactionId")
-                    Log.d(TAG, "Payment status: $paymentStatus")
-                    Log.d(TAG, "Processor response: $paymentMessage")
-                    
-                    if (paymentStatus == "successful") {
-                        FlutterwavePaymentResult(
-                            success = true,
-                            transactionId = transactionId,
-                            message = "Payment successful! $paymentMessage"
-                        )
-                    } else {
-                        FlutterwavePaymentResult(
-                            success = false,
-                            transactionId = transactionId,
-                            message = "Payment failed: $paymentMessage"
-                        )
-                    }
-                } else {
-                    Log.e(TAG, "Flutterwave payment failed: ${json.optString("message", "Unknown error")}")
-                    FlutterwavePaymentResult(
-                        success = false,
-                        transactionId = null,
-                        message = json.optString("message", "Payment failed")
-                    )
-                }
+            if (response.isSuccessful && responseBody != null) {
+                JSONObject(responseBody)
             } else {
-                Log.e(TAG, "Flutterwave API error: ${response.code} - $responseBody")
-                FlutterwavePaymentResult(
-                    success = false,
-                    transactionId = null,
-                    message = "API error: ${response.code}"
-                )
+                Log.e(TAG, "Failed to create charge: ${response.code} - $responseBody")
+                null
             }
             
         } catch (e: Exception) {
-            Log.e(TAG, "Error initializing Flutterwave payment", e)
-            FlutterwavePaymentResult(
-                success = false,
-                transactionId = null,
-                message = "Payment initialization error: ${e.message}"
-            )
+            Log.e(TAG, "Error creating charge", e)
+            null
         }
     }
     
-    private suspend fun verifyPayment(transactionId: String): FlutterwavePaymentResult = withContext(Dispatchers.IO) {
+    /**
+     * Handle the charge result and determine next steps
+     */
+    private suspend fun handleChargeResult(chargeResult: JSONObject, callback: FlutterwaveCallback) {
         try {
-            val request = Request.Builder()
-                .url("$BASE_URL$VERIFY_ENDPOINT/$transactionId/verify")
-                .addHeader("Authorization", "Bearer $SECRET_KEY")
-                .addHeader("Content-Type", "application/json")
-                .get()
-                .build()
+            val status = chargeResult.optString("status")
+            val message = chargeResult.optString("message")
+            val data = chargeResult.optJSONObject("data")
             
-            Log.d(TAG, "Verifying Flutterwave payment: $transactionId")
-            
-            val response = client.newCall(request).execute()
-            val responseBody = response.body?.string()
-            
-            Log.d(TAG, "Flutterwave verification response: ${response.code} - $responseBody")
-            
-            if (response.isSuccessful && !responseBody.isNullOrEmpty()) {
-                val json = JSONObject(responseBody)
-                if (json.getString("status") == "success") {
-                    val data = json.getJSONObject("data")
-                    val status = data.getString("status")
-                    
-                    if (status == "successful") {
-                        Log.d(TAG, "Flutterwave payment verified successfully")
-                        FlutterwavePaymentResult(
-                            success = true,
-                            transactionId = transactionId,
-                            message = "Payment verified successfully"
-                        )
-                    } else {
-                        Log.e(TAG, "Flutterwave payment verification failed: $status")
-                        FlutterwavePaymentResult(
-                            success = false,
-                            transactionId = transactionId,
-                            message = "Payment verification failed: $status"
-                        )
+            if (status == "success" && data != null) {
+                val flwRef = data.optString("flw_ref")
+                val chargeStatus = data.optString("status")
+                val processorResponse = data.optString("processor_response")
+                val authModel = data.optString("auth_model")
+                val authUrl = data.optString("auth_url")
+                
+                when {
+                    authModel == "PIN" -> {
+                        withContext(Dispatchers.Main) {
+                            callback.onPinRequired(flwRef, processorResponse)
+                        }
                     }
-                } else {
-                    Log.e(TAG, "Flutterwave verification failed: ${json.optString("message", "Unknown error")}")
-                    FlutterwavePaymentResult(
-                        success = false,
-                        transactionId = transactionId,
-                        message = json.optString("message", "Verification failed")
-                    )
+                    authModel == "OTP" -> {
+                        withContext(Dispatchers.Main) {
+                            callback.onOtpRequired(flwRef, processorResponse)
+                        }
+                    }
+                    authModel == "3DS" && authUrl.isNotEmpty() -> {
+                        withContext(Dispatchers.Main) {
+                            callback.onRedirectRequired(authUrl, processorResponse)
+                        }
+                    }
+                    chargeStatus == "successful" -> {
+                        // Payment successful
+                        val cardInfo = currentCardInfo ?: com.nexgo.n92pos.model.CardInfo("", "", null, null, null, null)
+                        val transaction = PaymentTransaction(
+                            transactionId = data.optString("id"),
+                            amount = data.optDouble("amount"),
+                            cardNumber = cardInfo.cardNumber,
+                            cardType = cardInfo.cardType,
+                            authCode = flwRef,
+                            timestamp = System.currentTimeMillis(),
+                            status = "successful",
+                            processor = "flutterwave"
+                        )
+                        withContext(Dispatchers.Main) {
+                            callback.onSuccess(transaction)
+                        }
+                    }
+                    else -> {
+                        withContext(Dispatchers.Main) {
+                            callback.onFailure("Payment failed: $processorResponse")
+                        }
+                    }
                 }
             } else {
-                Log.e(TAG, "Flutterwave verification API error: ${response.code} - $responseBody")
-                FlutterwavePaymentResult(
-                    success = false,
-                    transactionId = transactionId,
-                    message = "Verification API error: ${response.code}"
-                )
+                withContext(Dispatchers.Main) {
+                    callback.onFailure("Payment failed: $message")
+                }
             }
-            
         } catch (e: Exception) {
-            Log.e(TAG, "Error verifying Flutterwave payment", e)
-            FlutterwavePaymentResult(
-                success = false,
-                transactionId = transactionId,
-                message = "Payment verification error: ${e.message}"
-            )
+            Log.e(TAG, "Error handling charge result", e)
+            withContext(Dispatchers.Main) {
+                callback.onFailure("Error processing payment: ${e.message}")
+            }
         }
     }
     
-    // Get account balance (if supported by Flutterwave)
-    suspend fun getAccountBalance(): Double = withContext(Dispatchers.IO) {
-        try {
-            // Flutterwave doesn't have a direct balance API, but you can get transaction history
-            // For now, return a placeholder
-            Log.d(TAG, "Flutterwave balance check not directly supported")
-            0.0
-        } catch (e: Exception) {
-            Log.e(TAG, "Error getting Flutterwave balance", e)
-            0.0
+    /**
+     * Authorize with PIN
+     */
+    fun authorizeWithPin(flwRef: String, pin: String, callback: FlutterwaveCallback) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val authData = JSONObject().apply {
+                    put("type", "pin")
+                    put("pin", pin)
+                }
+                
+                val request = Request.Builder()
+                    .url("$baseUrl/charges/$flwRef/authorize")
+                    .put(authData.toString().toRequestBody("application/json".toMediaType()))
+                    .addHeader("Authorization", "Bearer $secretKey")
+                    .addHeader("Content-Type", "application/json")
+                    .build()
+                
+                val response = client.newCall(request).execute()
+                val responseBody = response.body?.string()
+                
+                Log.d(TAG, "PIN authorization response: $responseBody")
+                
+                if (response.isSuccessful && responseBody != null) {
+                    val result = JSONObject(responseBody)
+                    handleChargeResult(result, callback)
+                } else {
+                    withContext(Dispatchers.Main) {
+                        callback.onFailure("PIN authorization failed: ${response.code}")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error authorizing with PIN", e)
+                withContext(Dispatchers.Main) {
+                    callback.onFailure("PIN authorization error: ${e.message}")
+                }
+            }
         }
     }
+    
+    /**
+     * Validate OTP
+     */
+    fun validateOtp(flwRef: String, otp: String, callback: FlutterwaveCallback) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val otpData = JSONObject().apply {
+                    put("type", "otp")
+                    put("otp", otp)
+                }
+                
+                val request = Request.Builder()
+                    .url("$baseUrl/charges/$flwRef/authorize")
+                    .put(otpData.toString().toRequestBody("application/json".toMediaType()))
+                    .addHeader("Authorization", "Bearer $secretKey")
+                    .addHeader("Content-Type", "application/json")
+                    .build()
+                
+                val response = client.newCall(request).execute()
+                val responseBody = response.body?.string()
+                
+                Log.d(TAG, "OTP validation response: $responseBody")
+                
+                if (response.isSuccessful && responseBody != null) {
+                    val result = JSONObject(responseBody)
+                    handleChargeResult(result, callback)
+                } else {
+                    withContext(Dispatchers.Main) {
+                        callback.onFailure("OTP validation failed: ${response.code}")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error validating OTP", e)
+                withContext(Dispatchers.Main) {
+                    callback.onFailure("OTP validation error: ${e.message}")
+                }
+            }
+        }
+    }
+    
+    /**
+     * Parse expiry date from various formats
+     */
+    private fun parseExpiryDate(expiryDate: String): Pair<String, String>? {
+        return try {
+            val cleaned = expiryDate.replace(Regex("[^0-9]"), "")
+            
+            when (cleaned.length) {
+                4 -> {
+                    // YYMM format (e.g., "2810" = October 2028)
+                    val year = "20${cleaned.substring(0, 2)}"
+                    val month = cleaned.substring(2, 4)
+                    Pair(month, year)
+                }
+                6 -> {
+                    // YYYYMM format
+                    val year = cleaned.substring(0, 4)
+                    val month = cleaned.substring(4, 6)
+                    Pair(month, year)
+                }
+                else -> null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error parsing expiry date: $expiryDate", e)
+            null
+        }
+    }
+    
+    /**
+     * Mask card number for logging
+     */
+    private fun maskCardNumber(cardNumber: String): String {
+        return if (cardNumber.length >= 4) {
+            "**** **** **** ${cardNumber.takeLast(4)}"
+        } else {
+            "****"
+        }
+    }
+    
 }

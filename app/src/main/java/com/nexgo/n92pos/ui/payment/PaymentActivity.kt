@@ -5,6 +5,8 @@ import android.os.Bundle
 import android.util.Log
 import android.view.View
 import android.widget.Toast
+import android.widget.ArrayAdapter
+import android.widget.AdapterView
 import com.nexgo.n92pos.utils.UIUtils
 import android.widget.TextView
 import android.widget.Button
@@ -44,6 +46,11 @@ class PaymentActivity : AppCompatActivity() {
     
     private var currentAmount: String = "0.00"
     private var currentTransaction: Transaction? = null
+    private var selectedCurrency: String = "KES"
+    
+    companion object {
+        private const val TAG = "PaymentActivity"
+    }
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -56,6 +63,33 @@ class PaymentActivity : AppCompatActivity() {
         setupUI()
         observeViewModel()
         handleIntent()
+        setupCurrencySpinner()
+    }
+    
+    private fun setupCurrencySpinner() {
+        val currencies = arrayOf("KES", "USD", "EUR", "GBP", "NGN", "GHS", "ZAR")
+        val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, currencies)
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        binding.spinnerCurrency.adapter = adapter
+        
+        // Set default to KES
+        val defaultIndex = currencies.indexOf("KES")
+        if (defaultIndex >= 0) {
+            binding.spinnerCurrency.setSelection(defaultIndex)
+        }
+        
+        binding.spinnerCurrency.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                selectedCurrency = currencies[position]
+                Log.d(TAG, "Currency selected: $selectedCurrency")
+                
+                // Save currency to shared preferences
+                val sharedPrefs = getSharedPreferences("payment_settings", android.content.Context.MODE_PRIVATE)
+                sharedPrefs.edit().putString("selected_currency", selectedCurrency).apply()
+            }
+            
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
     }
     
     private fun handleIntent() {

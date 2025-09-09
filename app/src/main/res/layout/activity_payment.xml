@@ -147,6 +147,13 @@
                 android:textColor="@color/text_primary"
                 android:inputType="numberDecimal"
                 android:background="@drawable/button_keypad_background"
+                android:layout_marginEnd="8dp" />
+
+            <Spinner
+                android:id="@+id/spinnerCurrency"
+                android:layout_width="120dp"
+                android:layout_height="60dp"
+                android:background="@drawable/button_keypad_background"
                 android:padding="16dp"
                 android:gravity="center"
                 android:selectAllOnFocus="true" />
