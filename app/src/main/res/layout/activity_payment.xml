@@ -209,17 +209,29 @@
 
     </LinearLayout>
 
-    <!-- Manual Entry Button (initially hidden) -->
+    <!-- Swipe Card Button (primary method) -->
+    <Button
+        android:id="@+id/btnSwipeCard"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_margin="16dp"
+        android:text="💳 Swipe Card (Recommended)"
+        android:textSize="18sp"
+        android:background="@drawable/button_primary_background"
+        android:textColor="@android:color/white"
+        android:visibility="visible" />
+
+    <!-- Manual Entry Button (fallback) -->
     <Button
         android:id="@+id/btnManualEntry"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_margin="16dp"
-        android:text="Enter Card Manually"
-        android:textSize="18sp"
+        android:text="📝 Manual Entry (if swipe fails)"
+        android:textSize="16sp"
         android:background="@drawable/button_secondary_background"
         android:textColor="@color/primary_color"
-        android:visibility="gone" />
+        android:visibility="visible" />
 
     <!-- Action Buttons -->
     <LinearLayout

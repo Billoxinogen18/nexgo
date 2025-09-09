@@ -142,6 +142,7 @@ class PaymentActivity : AppCompatActivity() {
             btnClearAmount.setOnClickListener { clearAmount() }
             btnCancel.setOnClickListener { finish() }
             btnBack.setOnClickListener { finish() }
+            btnSwipeCard.setOnClickListener { startSwipeCardReading() }
             btnManualEntry.setOnClickListener { showManualEntryDialog() }
         }
     }
@@ -223,17 +224,54 @@ class PaymentActivity : AppCompatActivity() {
         )
         
         viewModel.setPaymentStatus("CARD_DETECTED")
-        startCardReading()
+        // Use swipe by default since it works perfectly
+        startSwipeCardReading()
+    }
+    
+    private fun startSwipeCardReading() {
+        if (currentAmount == "0.00") {
+            UIUtils.showWarningSnackbar(binding.root, "Please enter amount first")
+            return
+        }
+        
+        // Show visual feedback for swipe detection
+        binding.tvStatus.text = "💳 Please swipe your card..."
+        binding.tvStatus.setTextColor(getColor(R.color.warning_color))
+        binding.progressCardDetection.visibility = View.VISIBLE
+        binding.btnSwipeCard.isEnabled = false
+        binding.btnManualEntry.isEnabled = false
+        
+        // Search ONLY for swipe cards since they work perfectly
+        val slotTypes = setOf(CardSlotTypeEnum.SWIPE)
+        
+        cardReaderService.searchCard(slotTypes, 30) { result, cardInfo ->
+            runOnUiThread {
+                binding.btnSwipeCard.isEnabled = true
+                binding.btnManualEntry.isEnabled = true
+                
+                if (result == 0 && cardInfo != null) {
+                    Log.d("PaymentActivity", "Swipe card detected successfully")
+                    processCardPayment(cardInfo)
+                } else {
+                    Log.e("PaymentActivity", "Swipe card detection failed - result: $result")
+                    binding.tvStatus.text = "❌ Swipe failed. Please try again or use manual entry."
+                    binding.tvStatus.setTextColor(getColor(R.color.error_color))
+                    binding.progressCardDetection.visibility = View.GONE
+                    UIUtils.showErrorSnackbar(binding.root, "Swipe failed. Please try again or use manual entry.")
+                }
+            }
+        }
     }
     
     private fun startCardReading() {
         // Show visual feedback for card detection
         showCardDetectionUI()
         
+        // Prioritize SWIPE since it works reliably and provides complete card data
         val slotTypes = setOf(
-            CardSlotTypeEnum.ICC1,  // Chip card
-            CardSlotTypeEnum.SWIPE, // Magnetic stripe
-            CardSlotTypeEnum.RF     // Contactless/NFC
+            CardSlotTypeEnum.SWIPE, // Magnetic stripe - WORKS PERFECTLY
+            CardSlotTypeEnum.ICC1,  // Chip card - fallback
+            CardSlotTypeEnum.RF     // Contactless/NFC - fallback
         )
         
         cardReaderService.searchCard(slotTypes, 60) { result, cardInfo ->
@@ -256,7 +294,7 @@ class PaymentActivity : AppCompatActivity() {
     }
     
     private fun showCardDetectionUI() {
-        binding.tvStatus.text = "🔍 Please insert, swipe, or tap your card..."
+        binding.tvStatus.text = "💳 Please swipe your card (recommended) or insert/tap..."
         binding.tvStatus.setTextColor(getColor(R.color.warning_color))
         
         // Show progress bar
