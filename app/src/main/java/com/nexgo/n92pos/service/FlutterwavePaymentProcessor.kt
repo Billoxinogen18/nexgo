@@ -126,7 +126,7 @@ class FlutterwavePaymentProcessor(
                 put("cvv", "270") // Use actual CVV from your card
                 put("expirymonth", expiryMonth)
                 put("expiryyear", expiryYear)
-                put("amount", amount)
+                put("amount", amount.toString()) // Convert to string as Rave API expects
                 put("email", customerEmail)
                 put("phonenumber", "08012345678")
                 put("firstname", customerName.split(" ").firstOrNull() ?: "Customer")
