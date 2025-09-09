@@ -29,7 +29,7 @@ class BinancePaymentProcessor {
         private const val API_KEY = "ghhAUdvCyMrYImYzFnaeom1cVXvHopy5gKWmQ9O7hPZK13ImJa66BJZ8L7Gps6C8"
         private const val SECRET_KEY = "Xj0OCpB7H7t4YT6LD87ShEE1JMys0ppRI6aU1Xy2wIfU3VYoN2sZfAp8uvz3MEce"
         
-        // Binance API endpoints
+        // Binance Pay API endpoints (from official documentation)
         private const val BASE_URL = "https://api.binance.com"
         private const val PAY_URL = "https://bpay.binanceapi.com"
         
@@ -120,46 +120,64 @@ class BinancePaymentProcessor {
     private suspend fun createBinancePayOrder(usdtAmount: Double, cardInfo: CardInfo): BinancePaymentResult = withContext(Dispatchers.IO) {
         try {
             val timestamp = System.currentTimeMillis()
-            val orderId = "POS_${timestamp}_${cardInfo.cardNumber.takeLast(4)}"
+            val merchantTradeNo = "POS_${timestamp}_${cardInfo.cardNumber.takeLast(4)}"
+            val nonce = UUID.randomUUID().toString().replace("-", "")
             
-            // Create order parameters
-            val params = mapOf(
-                "orderId" to orderId,
-                "amount" to usdtAmount.toString(),
-                "currency" to DEFAULT_CRYPTO,
-                "description" to "POS Transaction - Card ${cardInfo.cardNumber.takeLast(4)}",
-                "timestamp" to timestamp.toString()
-            )
-            
-            // Create signature
-            val signature = createSignature(params)
-            
+            // Create Binance Pay order request body (based on official documentation)
             val requestBody = JSONObject().apply {
-                put("orderId", orderId)
-                put("amount", usdtAmount)
+                put("env", JSONObject().apply {
+                    put("terminalType", "APP")
+                })
+                put("merchantTradeNo", merchantTradeNo)
+                put("orderAmount", usdtAmount)
                 put("currency", DEFAULT_CRYPTO)
-                put("description", "POS Transaction - Card ${cardInfo.cardNumber.takeLast(4)}")
-                put("timestamp", timestamp)
-                put("signature", signature)
+                put("goods", JSONObject().apply {
+                    put("goodsType", "01")
+                    put("goodsCategory", "0000")
+                    put("referenceGoodsId", "pos_${cardInfo.cardNumber.takeLast(4)}")
+                    put("goodsName", "POS Payment")
+                    put("goodsUnitAmount", JSONObject().apply {
+                        put("currency", DEFAULT_CRYPTO)
+                        put("amount", usdtAmount)
+                    })
+                })
+                put("buyer", JSONObject().apply {
+                    put("buyerName", JSONObject().apply {
+                        put("firstName", "Card")
+                        put("lastName", "Holder")
+                    })
+                })
             }.toString()
             
+            // Create signature for Binance Pay (different from regular Binance API)
+            val signature = createBinancePaySignature(requestBody, timestamp, nonce)
+            
             val request = Request.Builder()
-                .url("$PAY_URL/bapi/c2c/v2/friendly/c2c/order/create")
-                .addHeader("X-MBX-APIKEY", API_KEY)
+                .url("$PAY_URL/binancepay/openapi/v2/order")
                 .addHeader("Content-Type", "application/json")
+                .addHeader("BinancePay-Timestamp", timestamp.toString())
+                .addHeader("BinancePay-Nonce", nonce)
+                .addHeader("BinancePay-Certificate-SN", API_KEY)
+                .addHeader("BinancePay-Signature", signature)
                 .post(requestBody.toRequestBody("application/json".toMediaType()))
                 .build()
+            
+            Log.d(TAG, "Making Binance Pay order request to: $PAY_URL/binancepay/openapi/v2/order")
+            Log.d(TAG, "Request body: $requestBody")
             
             val response = client.newCall(request).execute()
             val responseBody = response.body?.string()
             
+            Log.d(TAG, "Binance Pay response: ${response.code} - $responseBody")
+            
             if (response.isSuccessful && !responseBody.isNullOrEmpty()) {
                 val json = JSONObject(responseBody)
-                if (json.getBoolean("success")) {
-                    Log.d(TAG, "Binance Pay order created: $orderId")
+                if (json.optString("status") == "SUCCESS") {
+                    val prepayId = json.optString("prepayId")
+                    Log.d(TAG, "Binance Pay order created: $merchantTradeNo, prepayId: $prepayId")
                     BinancePaymentResult(
                         success = true,
-                        transactionId = orderId,
+                        transactionId = prepayId.ifEmpty { merchantTradeNo },
                         message = "Order created successfully"
                     )
                 } else {
@@ -222,6 +240,18 @@ class BinancePaymentProcessor {
                 message = "Payment processing error: ${e.message}"
             )
         }
+    }
+    
+    private fun createBinancePaySignature(requestBody: String, timestamp: Long, nonce: String): String {
+        // Binance Pay signature format: timestamp + "\n" + nonce + "\n" + requestBody + "\n"
+        val payload = "$timestamp\n$nonce\n$requestBody\n"
+        
+        val mac = Mac.getInstance("HmacSHA256")
+        val secretKeySpec = SecretKeySpec(SECRET_KEY.toByteArray(), "HmacSHA256")
+        mac.init(secretKeySpec)
+        
+        val signature = mac.doFinal(payload.toByteArray())
+        return signature.joinToString("") { "%02x".format(it) }
     }
     
     private fun createSignature(params: Map<String, String>): String {
