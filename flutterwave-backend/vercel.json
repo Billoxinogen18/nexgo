@@ -1,0 +1,12 @@
+{
+  "functions": {
+    "api/charge.js": {
+      "maxDuration": 30
+    }
+  },
+  "env": {
+    "FLW_PUBLIC_KEY": "@flw_public_key",
+    "FLW_SECRET_KEY": "@flw_secret_key",
+    "FLW_ENCRYPTION_KEY": "@flw_encryption_key"
+  }
+}

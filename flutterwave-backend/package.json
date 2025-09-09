@@ -1,0 +1,16 @@
+{
+  "name": "flutterwave-backend",
+  "version": "1.0.0",
+  "description": "Flutterwave backend API for Android POS terminal",
+  "main": "api/charge.js",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel --prod"
+  },
+  "dependencies": {
+    "flutterwave-node-v3": "^1.3.0"
+  },
+  "devDependencies": {
+    "vercel": "^32.0.0"
+  }
+}
