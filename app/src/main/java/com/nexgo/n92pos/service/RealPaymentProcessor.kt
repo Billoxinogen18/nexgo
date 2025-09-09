@@ -26,7 +26,7 @@ class RealPaymentProcessor(private val context: Context) {
     }
     
     private val client = OkHttpClient()
-    private val binanceProcessor = BinancePaymentProcessor()
+    private val flutterwaveProcessor = FlutterwavePaymentProcessor()
     
     interface PaymentCallback {
         fun onSuccess(transaction: PaymentTransaction)
@@ -161,13 +161,13 @@ class RealPaymentProcessor(private val context: Context) {
             emvData = null
         )
         
-        // Use Binance Pay as primary processor with your real API keys
-        processWithBinancePay(amount, modelCardInfo) { success, transaction, error ->
+        // Use Flutterwave as primary processor with your verified API keys
+        processWithFlutterwave(amount, modelCardInfo) { success, transaction, error ->
             if (success && transaction != null) {
-                Log.d(TAG, "REAL Binance Pay payment successful: ${transaction.transactionId}")
+                Log.d(TAG, "REAL Flutterwave payment successful: ${transaction.transactionId}")
                 callback.onSuccess(transaction)
             } else {
-                Log.e(TAG, "REAL Binance Pay payment failed: $error")
+                Log.e(TAG, "REAL Flutterwave payment failed: $error")
                 // Try Stripe as backup
                 processWithStripe(amount, cardInfo) { success2: Boolean, transaction2: PaymentTransaction?, error2: String? ->
                     if (success2 && transaction2 != null) {
@@ -186,13 +186,48 @@ class RealPaymentProcessor(private val context: Context) {
         }
     }
     
+    private fun processWithFlutterwave(amount: Double, cardInfo: com.nexgo.n92pos.model.CardInfo, callback: (Boolean, PaymentTransaction?, String?) -> Unit) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                Log.d(TAG, "Processing REAL Flutterwave payment: $${String.format("%.2f", amount)} for card ending in ${cardInfo.cardNumber.takeLast(4)}")
+                
+                // Use Flutterwave processor directly with model CardInfo
+                val result = flutterwaveProcessor.processPayment(cardInfo, amount)
+                
+                if (result.success) {
+                    val transaction = PaymentTransaction(
+                        transactionId = result.transactionId ?: "FLUTTERWAVE_${System.currentTimeMillis()}",
+                        amount = amount,
+                        cardNumber = cardInfo.cardNumber,
+                        cardType = "Visa",
+                        authCode = "FLUTTERWAVE_AUTH",
+                        timestamp = System.currentTimeMillis(),
+                        status = "completed",
+                        processor = "flutterwave",
+                        cryptoTxHash = result.transactionId
+                    )
+                    
+                    Log.d(TAG, "REAL Flutterwave payment successful: ${transaction.transactionId}")
+                    callback(true, transaction, null)
+                } else {
+                    Log.e(TAG, "REAL Flutterwave payment failed: ${result.message}")
+                    callback(false, null, result.message)
+                }
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "Flutterwave payment error", e)
+                callback(false, null, "Flutterwave payment error: ${e.message}")
+            }
+        }
+    }
+    
     private fun processWithBinancePay(amount: Double, cardInfo: com.nexgo.n92pos.model.CardInfo, callback: (Boolean, PaymentTransaction?, String?) -> Unit) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 Log.d(TAG, "Processing REAL Binance Pay payment: $${String.format("%.2f", amount)} for card ending in ${cardInfo.cardNumber.takeLast(4)}")
                 
                 // Use Binance Pay processor directly with model CardInfo
-                val result = binanceProcessor.processPayment(cardInfo, amount)
+                val result = flutterwaveProcessor.processPayment(cardInfo, amount)
                 
                 if (result.success) {
                     val transaction = PaymentTransaction(
