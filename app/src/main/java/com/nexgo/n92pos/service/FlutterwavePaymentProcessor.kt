@@ -148,6 +148,7 @@ class FlutterwavePaymentProcessor(
             val request = Request.Builder()
                 .url("$baseUrl/v3/charges?type=card")
                 .post(chargeData.toString().toRequestBody("application/json".toMediaType()))
+                .addHeader("Authorization", "Bearer $secretKey")
                 .addHeader("Content-Type", "application/json")
                 .build()
             

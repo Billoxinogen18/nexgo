@@ -3,6 +3,8 @@
   <component name="VcsDirectoryMappings">
     <mapping directory="$PROJECT_DIR$" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/Nexgo-EMV-example" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/binance-pay-postman-collection" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/flutterwave-node-v3" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/nexgo_sdk_example" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/nexgopay" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/react-native-nexgo" vcs="Git" />
