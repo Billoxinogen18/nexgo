@@ -243,7 +243,7 @@ class RealPaymentProcessor(private val context: Context) {
                     put("payment_source", JSONObject().apply {
                         put("card", JSONObject().apply {
                             put("number", cardInfo.cardNumber)
-                            put("expiry", cardInfo.expiryDate) // PayPal expects MMYY format
+                            put("expiry", formatExpiryForPayPal(cardInfo.expiryDate)) // PayPal expects MM/YY format
                             put("name", "Card Holder")
                             put("billing_address", JSONObject().apply {
                                 put("country_code", "US")
@@ -277,7 +277,7 @@ class RealPaymentProcessor(private val context: Context) {
                         put("payment_source", JSONObject().apply {
                             put("card", JSONObject().apply {
                                 put("number", cardInfo.cardNumber)
-                                put("expiry", cardInfo.expiryDate) // PayPal expects MMYY format
+                                put("expiry", formatExpiryForPayPal(cardInfo.expiryDate)) // PayPal expects MM/YY format
                                 put("name", "Card Holder")
                             })
                         })
@@ -551,6 +551,22 @@ class RealPaymentProcessor(private val context: Context) {
                 }
             }
         }
+    }
+    
+    /**
+     * Format expiry date from MMYY to MM/YY for PayPal API
+     * @param expiryMMYY Expiry date in MMYY format (e.g., "1028")
+     * @return Formatted expiry date in MM/YY format (e.g., "10/28")
+     */
+    private fun formatExpiryForPayPal(expiryMMYY: String): String {
+        if (expiryMMYY.length != 4) {
+            Log.w(TAG, "Invalid expiry format: $expiryMMYY, expected MMYY")
+            return "12/25" // Fallback
+        }
+        
+        val month = expiryMMYY.substring(0, 2)
+        val year = expiryMMYY.substring(2, 4)
+        return "$month/$year" // Format as MM/YY
     }
     
     private fun getRealCardInfo(cardNumber: String, expiryDate: String, callback: (CardInfo?) -> Unit) {

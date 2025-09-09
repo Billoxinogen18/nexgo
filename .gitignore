@@ -2,3 +2,9 @@
 /.gradle/
 /app/build/
 /app/build/intermediates/javac/debug/classes/
+# Cloned repositories for research
+Nexgo-EMV-example/
+nexgo_sdk_example/
+nexgopay/
+react-native-nexgo/
+paypal-android/
