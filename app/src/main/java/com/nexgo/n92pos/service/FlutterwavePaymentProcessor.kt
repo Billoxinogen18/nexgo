@@ -23,9 +23,10 @@ class FlutterwavePaymentProcessor {
     companion object {
         private const val TAG = "FlutterwavePaymentProcessor"
         
-        // Your Flutterwave credentials (replace with your actual keys)
-        private const val PUBLIC_KEY = "FLWPUBK_TEST-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" // Your public key
-        private const val SECRET_KEY = "FLWSECK_TEST-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" // Your secret key
+        // Flutterwave API credentials
+        private const val PUBLIC_KEY = "FLWPUBK-29802e133b304197dae7c95ac0239b03-X"
+        private const val SECRET_KEY = "FLWSECK-2550f6c6e154dabf6b6040079990fc44-1992edc8eedvt-X"
+        private const val ENCRYPTION_KEY = "2550f6c6e15446bdb82e59e0"
         
         // Flutterwave API endpoints
         private const val BASE_URL = "https://api.flutterwave.com/v3"
@@ -47,26 +48,12 @@ class FlutterwavePaymentProcessor {
             val initResult = initializePayment(cardInfo, amount)
             
             if (initResult.success) {
-                Log.d(TAG, "Flutterwave payment initialized successfully: ${initResult.transactionId}")
-                
-                // Step 2: Verify payment (in real implementation, this would be done via webhook)
-                val verifyResult = verifyPayment(initResult.transactionId!!)
-                
-                if (verifyResult.success) {
-                    Log.d(TAG, "Flutterwave payment verified successfully")
-                    FlutterwavePaymentResult(
-                        success = true,
-                        transactionId = initResult.transactionId,
-                        message = "Payment successful! Amount: $${amount} processed via Flutterwave"
-                    )
-                } else {
-                    Log.e(TAG, "Flutterwave payment verification failed: ${verifyResult.message}")
-                    FlutterwavePaymentResult(
-                        success = false,
-                        transactionId = initResult.transactionId,
-                        message = "Payment verification failed: ${verifyResult.message}"
-                    )
-                }
+                Log.d(TAG, "Flutterwave direct payment successful: ${initResult.transactionId}")
+                FlutterwavePaymentResult(
+                    success = true,
+                    transactionId = initResult.transactionId,
+                    message = "Payment successful! Amount: $${amount} processed via Flutterwave"
+                )
             } else {
                 Log.e(TAG, "Failed to initialize Flutterwave payment: ${initResult.message}")
                 FlutterwavePaymentResult(
@@ -90,30 +77,30 @@ class FlutterwavePaymentProcessor {
         try {
             val txRef = "POS_${System.currentTimeMillis()}_${cardInfo.cardNumber.takeLast(4)}"
             
-            // Create payment request body
+            // Create direct card payment request body
             val requestBody = JSONObject().apply {
                 put("tx_ref", txRef)
                 put("amount", amount)
                 put("currency", CURRENCY)
                 put("redirect_url", "https://your-pos-app.com/payment-callback")
-                put("payment_options", "card")
                 put("customer", JSONObject().apply {
                     put("email", "customer@pos.com")
-                    put("name", "POS Customer")
+                    put("name", "Cardholder")
                     put("phone_number", "1234567890")
-                })
-                put("customizations", JSONObject().apply {
-                    put("title", "POS Payment")
-                    put("description", "Point of Sale Transaction")
-                    put("logo", "https://your-pos-app.com/logo.png")
                 })
                 put("card", JSONObject().apply {
                     put("card_number", cardInfo.cardNumber)
                     put("cvv", "123") // In real implementation, get from user input
                     put("expiry_month", cardInfo.expiryDate?.take(2) ?: "12")
                     put("expiry_year", "20${cardInfo.expiryDate?.takeLast(2) ?: "25"}")
-                    put("currency", CURRENCY)
-                    put("amount", amount)
+                })
+                put("authorization", JSONObject().apply {
+                    put("mode", "pin")
+                    put("pin", "3310") // Default PIN for testing
+                })
+                put("meta", JSONObject().apply {
+                    put("pos_terminal", "Nexgo N92")
+                    put("transaction_type", "card_present")
                 })
             }.toString()
             
@@ -136,22 +123,33 @@ class FlutterwavePaymentProcessor {
                 val json = JSONObject(responseBody)
                 if (json.getString("status") == "success") {
                     val data = json.getJSONObject("data")
-                    val transactionId = data.getString("tx_ref")
-                    val paymentUrl = data.optString("link", null)
+                    val transactionId = data.optString("tx_ref", txRef)
+                    val paymentStatus = data.optString("status", "unknown")
+                    val paymentMessage = data.optString("processor_response", "Payment processed")
                     
-                    Log.d(TAG, "Flutterwave payment initialized: $transactionId")
-                    FlutterwavePaymentResult(
-                        success = true,
-                        transactionId = transactionId,
-                        message = "Payment initialized successfully",
-                        paymentUrl = paymentUrl
-                    )
+                    Log.d(TAG, "Flutterwave direct payment result: $transactionId")
+                    Log.d(TAG, "Payment status: $paymentStatus")
+                    Log.d(TAG, "Processor response: $paymentMessage")
+                    
+                    if (paymentStatus == "successful") {
+                        FlutterwavePaymentResult(
+                            success = true,
+                            transactionId = transactionId,
+                            message = "Payment successful! $paymentMessage"
+                        )
+                    } else {
+                        FlutterwavePaymentResult(
+                            success = false,
+                            transactionId = transactionId,
+                            message = "Payment failed: $paymentMessage"
+                        )
+                    }
                 } else {
-                    Log.e(TAG, "Flutterwave payment initialization failed: ${json.optString("message", "Unknown error")}")
+                    Log.e(TAG, "Flutterwave payment failed: ${json.optString("message", "Unknown error")}")
                     FlutterwavePaymentResult(
                         success = false,
                         transactionId = null,
-                        message = json.optString("message", "Payment initialization failed")
+                        message = json.optString("message", "Payment failed")
                     )
                 }
             } else {

@@ -79,8 +79,8 @@ class RealPaymentProcessor(private val context: Context) {
         Log.d(TAG, "Processing REAL payment: $amount for card ending in ${cardNumber.takeLast(4)}")
         
         // Validate amount - PayPal requires minimum $0.01
-        if (amount <= 0.0) {
-            callback.onFailure("Amount must be greater than $0.00 for real transactions")
+        if (amount < 1.0) {
+            callback.onFailure("Amount must be at least $1.00 for real transactions")
             return
         }
         
@@ -161,23 +161,24 @@ class RealPaymentProcessor(private val context: Context) {
             emvData = null
         )
         
-        // Use Flutterwave as primary processor with your verified API keys
-        processWithFlutterwave(amount, modelCardInfo) { success, transaction, error ->
+        // Use Stripe as primary processor (better for direct card processing)
+        processWithStripe(amount, cardInfo) { success, transaction, error ->
             if (success && transaction != null) {
-                Log.d(TAG, "REAL Flutterwave payment successful: ${transaction.transactionId}")
-                callback.onSuccess(transaction)
+                Log.d(TAG, "REAL Stripe payment successful: ${transaction.transactionId}")
+                processCryptoConversion(amount, transaction) { cryptoSuccess, cryptoTxHash ->
+                    val finalTransaction = transaction.copy(
+                        cryptoTxHash = cryptoTxHash,
+                        processor = "stripe"
+                    )
+                    callback.onSuccess(finalTransaction)
+                }
             } else {
-                Log.e(TAG, "REAL Flutterwave payment failed: $error")
-                // Try Stripe as backup
-                processWithStripe(amount, cardInfo) { success2: Boolean, transaction2: PaymentTransaction?, error2: String? ->
+                Log.e(TAG, "REAL Stripe payment failed: $error")
+                // Try Flutterwave as backup
+                processWithFlutterwave(amount, modelCardInfo) { success2: Boolean, transaction2: PaymentTransaction?, error2: String? ->
                     if (success2 && transaction2 != null) {
-                        processCryptoConversion(amount, transaction2) { cryptoSuccess, cryptoTxHash ->
-                            val finalTransaction = transaction2.copy(
-                                cryptoTxHash = cryptoTxHash,
-                                processor = "stripe"
-                            )
-                            callback.onSuccess(finalTransaction)
-                        }
+                        Log.d(TAG, "REAL Flutterwave payment successful: ${transaction2.transactionId}")
+                        callback.onSuccess(transaction2)
                     } else {
                         callback.onFailure("Payment processing failed: ${error ?: error2}")
                     }

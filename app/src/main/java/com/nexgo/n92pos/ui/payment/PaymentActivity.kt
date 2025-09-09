@@ -116,7 +116,7 @@ class PaymentActivity : AppCompatActivity() {
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
                 override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
                 override fun afterTextChanged(s: android.text.Editable?) {
-                    val amount = s?.toString() ?: "0.00"
+                    val amount = s?.toString() ?: "1.00"
                     currentAmount = amount
                     tvAmount.text = "$$amount"
                     viewModel.setAmount(amount)
@@ -769,8 +769,8 @@ class PaymentActivity : AppCompatActivity() {
                 }
                 
                 val amountValue = amount.toDoubleOrNull()
-                if (amountValue == null || amountValue <= 0) {
-                    UIUtils.showErrorSnackbar(binding.root, "Please enter a valid amount greater than $0.00")
+                if (amountValue == null || amountValue < 1.0) {
+                    UIUtils.showErrorSnackbar(binding.root, "Please enter a valid amount of at least $1.00")
                     return@setPositiveButton
                 }
                 
