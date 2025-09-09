@@ -564,18 +564,42 @@ class RealPaymentProcessor(private val context: Context) {
      * @param expiryMMYY Expiry date in MMYY format (e.g., "1028")
      * @return Formatted expiry date in YYYY-MM format (e.g., "2028-10")
      */
-    private fun formatExpiryForPayPal(expiryMMYY: String): String {
-        Log.d(TAG, "formatExpiryForPayPal input: '$expiryMMYY'")
-        if (expiryMMYY.length != 4) {
-            Log.w(TAG, "Invalid expiry format: $expiryMMYY, expected MMYY")
-            return "2025-12" // Fallback
+    /**
+     * Formats an expiry date from various possible formats (e.g., "MMyy", "yyMM")
+     * into the "YYYY-MM" format required by the PayPal API.
+     *
+     * @param expiryDate The raw expiry date string.
+     * @return The formatted date string, or a fallback date if parsing fails.
+     */
+    private fun formatExpiryForPayPal(expiryDate: String): String {
+        val cleanDate = expiryDate.replace("[^\\d]".toRegex(), "")
+        Log.d(TAG, "formatExpiryForPayPal input: '$expiryDate' -> cleaned: '$cleanDate'")
+
+        // Handle MMyy format
+        if (cleanDate.length == 4) {
+            return try {
+                // Attempt to parse as MMyy first
+                val month = cleanDate.substring(0, 2).toInt()
+                val year = cleanDate.substring(2, 4).toInt()
+                if (month in 1..12) {
+                    val result = "20$year-${String.format("%02d", month)}"
+                    Log.d(TAG, "formatExpiryForPayPal output (MMyy format): '$result'")
+                    result
+                } else {
+                    // If month is invalid, try yyMM
+                    val year2 = cleanDate.substring(0, 2).toInt()
+                    val month2 = cleanDate.substring(2, 4).toInt()
+                    val result = "20$year2-${String.format("%02d", month2)}"
+                    Log.d(TAG, "formatExpiryForPayPal output (yyMM format): '$result'")
+                    result
+                }
+            } catch (e: NumberFormatException) {
+                Log.e(TAG, "Error parsing expiry date '$expiryDate' for PayPal.")
+                "2025-12" // Fallback
+            }
         }
-        
-        val month = expiryMMYY.substring(0, 2)
-        val year = "20" + expiryMMYY.substring(2, 4) // Convert "28" to "2028"
-        val result = "$year-$month" // Format as YYYY-MM
-        Log.d(TAG, "formatExpiryForPayPal output: '$result'")
-        return result
+        Log.w(TAG, "Unexpected expiry date length: ${cleanDate.length}, expected 4 digits")
+        return "2025-12" // Fallback for unexpected lengths
     }
     
     private fun getRealCardInfo(cardNumber: String, expiryDate: String, callback: (CardInfo?) -> Unit) {
@@ -729,66 +753,96 @@ class RealPaymentProcessor(private val context: Context) {
         return sum % 10 == 0
     }
     
+    /**
+     * Validates the expiry date from the card reader.
+     * This function is designed to handle multiple date formats, including:
+     * - MM/yy (e.g., 10/28)
+     * - MMyy (e.g., 1028)
+     * - yyMM (e.g., 2810)
+     * - MM/yyyy (e.g., 10/2028)
+     * - MMyyyy (e.g., 102028)
+     *
+     * It also handles various separators like '/', '-', or spaces.
+     *
+     * @param expiryDate The expiry date string from the card reader.
+     * @return `true` if the expiry date is valid and not in the past, `false` otherwise.
+     */
     private fun isValidExpiryDate(expiryDate: String): Boolean {
-        return try {
-            val cleanDate = expiryDate.replace("/", "").replace("-", "").replace(" ", "")
-            
-            // Handle different date formats
-            val formats = listOf(
-                "MMyy",      // 1225
-                "MM/yy",     // 12/25
-                "MM-yy",     // 12-25
-                "MMyyyy",    // 122025
-                "MM/yyyy",   // 12/2025
-                "MM-yyyy"    // 12-2025
-            )
-            
-            var expiry: Date? = null
-            for (format in formats) {
-                try {
-                    val dateFormat = SimpleDateFormat(format, Locale.getDefault())
-                    dateFormat.isLenient = false
-                    expiry = dateFormat.parse(cleanDate)
-                    if (expiry != null) break
-                } catch (e: Exception) {
-                    // Try next format
+        val cleanDate = expiryDate.replace("[^\\d]".toRegex(), "") // Remove all non-digit characters
+        Log.d(TAG, "Validating expiry date: '$expiryDate' -> cleaned: '$cleanDate'")
+
+        var parsedDate: Date? = null
+        val currentCalendar = Calendar.getInstance()
+
+        // Define a list of possible date formats to try
+        val dateFormats = listOf(
+            "MMyy",
+            "yyMM",
+            "MMyyyy"
+        )
+
+        for (format in dateFormats) {
+            try {
+                // Handle 4-digit dates (MMyy or yyMM)
+                if (cleanDate.length == 4) {
+                    val sdf = SimpleDateFormat(format, Locale.US)
+                    sdf.isLenient = false
+                    parsedDate = sdf.parse(cleanDate)
+                    if (parsedDate != null) {
+                        Log.d(TAG, "Successfully parsed with format '$format': $parsedDate")
+                        break
+                    }
                 }
+                // Handle 6-digit dates (MMyyyy)
+                else if (cleanDate.length == 6 && format == "MMyyyy") {
+                    val sdf = SimpleDateFormat(format, Locale.US)
+                    sdf.isLenient = false
+                    parsedDate = sdf.parse(cleanDate)
+                    if (parsedDate != null) {
+                        Log.d(TAG, "Successfully parsed with format '$format': $parsedDate")
+                        break
+                    }
+                }
+            } catch (e: Exception) {
+                Log.d(TAG, "Failed to parse with format '$format': ${e.message}")
+                // Ignore parsing errors and try the next format
             }
-            
-            if (expiry == null) {
-                Log.w(TAG, "Could not parse expiry date: $expiryDate")
-                return false
-            }
-            
-            val now = Date()
-            val currentCalendar = Calendar.getInstance()
-            currentCalendar.time = now
-            
-            val expiryCalendar = Calendar.getInstance()
-            expiryCalendar.time = expiry
-            
-            // Compare year and month dynamically
-            val currentYear = currentCalendar.get(Calendar.YEAR)
-            val currentMonth = currentCalendar.get(Calendar.MONTH) + 1 // Calendar months are 0-based
-            val expiryYear = expiryCalendar.get(Calendar.YEAR)
-            val expiryMonth = expiryCalendar.get(Calendar.MONTH) + 1
-            
-            val isValid = (expiryYear > currentYear) || 
-                         (expiryYear == currentYear && expiryMonth >= currentMonth)
-            
-            Log.d(TAG, "Expiry validation - Current: $currentMonth/$currentYear, Card: $expiryMonth/$expiryYear, Valid: $isValid")
-            
-            if (!isValid) {
-                Log.w(TAG, "Card expired. Current: $currentMonth/$currentYear, Card: $expiryMonth/$expiryYear")
-            } else {
-                Log.d(TAG, "Card expiry valid. Current: $currentMonth/$currentYear, Card: $expiryMonth/$expiryYear")
-            }
-            
-            isValid
-        } catch (e: Exception) {
-            Log.e(TAG, "Error validating expiry date: $expiryDate", e)
-            false
         }
+
+        if (parsedDate == null) {
+            Log.e(TAG, "Could not parse expiry date: '$expiryDate' after trying all formats.")
+            return false
+        }
+
+        val expiryCalendar = Calendar.getInstance().apply { time = parsedDate }
+
+        // Normalize the year. If a 2-digit year is parsed (e.g., 28), SimpleDateFormat might interpret it as year 28.
+        // We need to ensure it's in the 21st century.
+        if (expiryCalendar.get(Calendar.YEAR) < 2000) {
+            Log.d(TAG, "Normalizing year from ${expiryCalendar.get(Calendar.YEAR)} to ${expiryCalendar.get(Calendar.YEAR) + 2000}")
+            expiryCalendar.add(Calendar.YEAR, 2000)
+        }
+        
+        // Set the expiry date to the end of the month for a reliable comparison
+        expiryCalendar.set(Calendar.DAY_OF_MONTH, expiryCalendar.getActualMaximum(Calendar.DAY_OF_MONTH))
+        expiryCalendar.set(Calendar.HOUR_OF_DAY, 23)
+        expiryCalendar.set(Calendar.MINUTE, 59)
+        expiryCalendar.set(Calendar.SECOND, 59)
+        expiryCalendar.set(Calendar.MILLISECOND, 999)
+
+        // Compare with the current date (set to the beginning of the day for consistency)
+        currentCalendar.set(Calendar.HOUR_OF_DAY, 0)
+        currentCalendar.set(Calendar.MINUTE, 0)
+        currentCalendar.set(Calendar.SECOND, 0)
+        currentCalendar.set(Calendar.MILLISECOND, 0)
+
+        if (expiryCalendar.before(currentCalendar)) {
+            Log.w(TAG, "Card is expired. Expiry date: ${expiryCalendar.time}, Current date: ${currentCalendar.time}")
+            return false
+        }
+
+        Log.d(TAG, "Card expiry date is valid: ${expiryCalendar.time}")
+        return true
     }
     
     private fun maskCardNumber(cardNumber: String): String {
