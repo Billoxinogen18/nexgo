@@ -209,6 +209,18 @@
 
     </LinearLayout>
 
+    <!-- Manual Entry Button (initially hidden) -->
+    <Button
+        android:id="@+id/btnManualEntry"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_margin="16dp"
+        android:text="Enter Card Manually"
+        android:textSize="18sp"
+        android:background="@drawable/button_secondary_background"
+        android:textColor="@color/primary_color"
+        android:visibility="gone" />
+
     <!-- Action Buttons -->
     <LinearLayout
         android:layout_width="match_parent"

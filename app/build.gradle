@@ -7,12 +7,12 @@ plugins {
 
 android {
     namespace 'com.nexgo.n92pos'
-    compileSdk 33
+    compileSdk 34
 
     defaultConfig {
         applicationId "com.nexgo.n92pos"
-        minSdk 21
-        targetSdk 33
+        minSdk 23
+        targetSdk 34
         versionCode 1
         versionName "1.0"
         multiDexEnabled true
@@ -113,6 +113,8 @@ dependencies {
     
     // EMV Utilities
     implementation 'com.github.devicesandtokens:ISW_EMV_UTIL_LIB:0.1'
+    
+    // PayPal REST API (no SDK needed)
     
     // Testing
     testImplementation 'junit:junit:4.13.2'

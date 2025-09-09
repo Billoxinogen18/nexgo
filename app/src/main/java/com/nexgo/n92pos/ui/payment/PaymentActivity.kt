@@ -276,8 +276,46 @@ class PaymentActivity : AppCompatActivity() {
         binding.progressCardDetection.visibility = View.GONE
         
         if (cardInfo != null) {
-            val cardNumber = cardInfo.cardNo ?: "Unknown"
-            val expiryDate = cardInfo.expiredDate ?: "Unknown"
+            val slotType = cardInfo.cardExistslot
+            Log.d("PaymentActivity", "Card slot type: $slotType")
+            Log.d("PaymentActivity", "Card slot type enum: ${slotType?.javaClass?.simpleName}")
+            
+            // For chip cards, we need to use EMV processing instead of track data
+            if (slotType == com.nexgo.oaf.apiv3.device.reader.CardSlotTypeEnum.ICC1) {
+                Log.d("PaymentActivity", "Chip card detected - starting EMV processing")
+                startEmvProcessing(cardInfo)
+                return
+            }
+            
+            // For swipe and NFC cards, try to extract from track data
+            val cardNumber = when {
+                !cardInfo.cardNo.isNullOrBlank() -> {
+                    Log.d("PaymentActivity", "Card number from cardNo: ${cardInfo.cardNo}")
+                    cardInfo.cardNo
+                }
+                !cardInfo.tk2.isNullOrBlank() && cardInfo.isTk2Valid() -> {
+                    val track2 = cardInfo.tk2
+                    Log.d("PaymentActivity", "Extracting from track 2: $track2")
+                    extractCardNumberFromTrack2(track2)
+                }
+                !cardInfo.tk1.isNullOrBlank() && cardInfo.isTk1Valid() -> {
+                    val track1 = cardInfo.tk1
+                    Log.d("PaymentActivity", "Extracting from track 1: $track1")
+                    extractCardNumberFromTrack1(track1)
+                }
+                else -> {
+                    Log.e("PaymentActivity", "No valid card data found in any track")
+                    Log.e("PaymentActivity", "cardNo: '${cardInfo.cardNo}'")
+                    Log.e("PaymentActivity", "tk1: '${cardInfo.tk1}' (valid: ${cardInfo.isTk1Valid()})")
+                    Log.e("PaymentActivity", "tk2: '${cardInfo.tk2}' (valid: ${cardInfo.isTk2Valid()})")
+                    Log.e("PaymentActivity", "tk3: '${cardInfo.tk3}' (valid: ${cardInfo.isTk3Valid()})")
+                    
+                    // No valid card data found - this is an error
+                    "0000000000000000" // Invalid card number to trigger error
+                }
+            }
+            
+            val expiryDate = cardInfo.expiredDate?.takeIf { it.isNotBlank() } ?: "1225" // Default expiry
             val cardholderName = "Cardholder" // Not available from card reader
             
             val maskedNumber = if (cardNumber.length >= 4) {
@@ -285,11 +323,6 @@ class PaymentActivity : AppCompatActivity() {
             } else {
                 "**** **** **** $cardNumber"
             }
-            
-            // Show card type - debug the actual slot type
-            val slotType = cardInfo.cardExistslot
-            Log.d("PaymentActivity", "Card slot type: $slotType")
-            Log.d("PaymentActivity", "Card slot type enum: ${slotType?.javaClass?.simpleName}")
             
             val cardType = when {
                 slotType == com.nexgo.oaf.apiv3.device.reader.CardSlotTypeEnum.ICC1 -> "Chip Card"
@@ -309,17 +342,28 @@ class PaymentActivity : AppCompatActivity() {
             // Determine card brand
             val cardBrand = when {
                 cardNumber == "Unknown" || cardNumber == "0000000000000000" -> {
-                    if (slotType == com.nexgo.oaf.apiv3.device.reader.CardSlotTypeEnum.ICC1) {
-                        "Chip Card (Number not readable - use manual entry)"
-                    } else {
-                        "Unknown (Card number not readable)"
-                    }
+                    "Unknown (Card number not readable)"
                 }
                 cardNumber.startsWith("4") -> "Visa"
                 cardNumber.startsWith("5") -> "Mastercard"
                 cardNumber.startsWith("3") -> "American Express"
                 cardNumber.startsWith("6") -> "Discover"
                 else -> "Unknown (Starts with: ${cardNumber.take(1)})"
+            }
+            
+            // Check if we have a valid card number
+            if (cardNumber == "0000000000000000" || cardNumber.length < 13) {
+                Log.e("PaymentActivity", "Invalid card number detected: '$cardNumber'")
+                Log.e("PaymentActivity", "Card slot type: $slotType")
+                
+                // Card detected but no track data available - this is a problem
+                Log.e("PaymentActivity", "Card detected but no track data available - this should not happen!")
+                UIUtils.showErrorSnackbar(binding.root, "Card detected but no track data readable. Please use manual entry or check card reader configuration.")
+                
+                // Show manual entry option
+                binding.btnManualEntry.visibility = View.VISIBLE
+                binding.btnManualEntry.text = "Enter Card Manually"
+                return
             }
             
             binding.tvStatus.text = "✓ Card detected: $maskedNumber"
@@ -424,6 +468,31 @@ class PaymentActivity : AppCompatActivity() {
     }
     
     
+    private fun startEmvProcessing(cardInfo: com.nexgo.oaf.apiv3.device.reader.CardInfoEntity) {
+        Log.d("PaymentActivity", "Starting EMV processing for chip card")
+        
+        // Update UI to show EMV processing
+        binding.tvStatus.text = "🔍 Processing chip card..."
+        binding.tvStatus.setTextColor(getColor(R.color.warning_color))
+        
+        UIUtils.showInfoSnackbar(binding.root, "Processing chip card - please wait...")
+        
+        // For now, show that EMV processing is not implemented
+        // In a real implementation, you would use the EMV handler here
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            Log.w("PaymentActivity", "EMV processing not implemented - showing manual entry option")
+            UIUtils.showWarningSnackbar(binding.root, "EMV processing not implemented. Please use manual entry.")
+            
+            // Show manual entry option
+            binding.btnManualEntry.visibility = View.VISIBLE
+            binding.btnManualEntry.text = "Enter Card Manually"
+            
+            binding.tvStatus.text = "⚠️ EMV processing not available"
+            binding.tvStatus.setTextColor(getColor(R.color.warning_color))
+        }, 2000)
+    }
+    
+    
     private fun processCardPayment(cardInfo: com.nexgo.oaf.apiv3.device.reader.CardInfoEntity) {
         binding.tvStatus.text = "Processing payment..."
         binding.tvStatus.setTextColor(getColor(R.color.warning_color))
@@ -496,7 +565,7 @@ class PaymentActivity : AppCompatActivity() {
             UIUtils.showWarningSnackbar(binding.root, "Using test card number - card reading needs to be fixed")
         }
         
-        // Use REAL payment processor
+        // Use REAL payment processor with PayPal v2 API
         realPaymentProcessor.processPayment(
             currentAmount.toDouble(),
             cardNumber,
